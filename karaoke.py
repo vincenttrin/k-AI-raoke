@@ -3,7 +3,25 @@ import subprocess
 import importlib.util
 from pathlib import Path
 import torch
+import omegaconf # Ensure this is imported
+import difflib
+import re
 
+# --- FIX FOR PYTORCH 2.6+ ---
+# PyTorch 2.6+ blocks "omegaconf" by default. We must explicitly allow it.
+try:
+    from omegaconf import DictConfig, ListConfig
+    from omegaconf.base import ContainerMetadata
+    torch.serialization.add_safe_globals([DictConfig, ListConfig, ContainerMetadata])
+    print("PyTorch 2.6+ fix applied: OmegaConf globals registered.")
+except Exception as e:
+    print(f"PyTorch fix warning: {e}")
+    # Fallback: Attempt to force weights_only=False if the above fails
+    try:
+        torch.serialization.safe_globals = None 
+    except: 
+        pass
+# -----------------------------
 
 def _ensure_ctranslate2_rocm_stub():
     """Create the dummy ROCm DLL folder that ctranslate2 expects on Windows."""
@@ -61,14 +79,47 @@ def transcribe_vocals_to_srt(vocals_path, language_code, output_dir):
     model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
     aligned_result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
 
-    srt_path = os.path.join(output_dir, "lyrics.srt")
-    # (Use the generate_srt function from the previous script here)
-    # ... assuming generate_srt handles the WhisperX result structure ...
+    resolved_output_dir = output_dir or os.path.dirname(os.path.abspath(vocals_path))
+    os.makedirs(resolved_output_dir, exist_ok=True)
+    srt_path = os.path.join(resolved_output_dir, "lyrics.srt")
+    generate_srt(aligned_result, srt_path)
 
     return {
         "aligned_segments": aligned_result,
         "srt_path": srt_path,
     }
+
+
+def _format_timestamp(seconds):
+    """Convert float seconds to the SRT timestamp format."""
+    if seconds is None:
+        seconds = 0.0
+    milliseconds = max(0, int(round(seconds * 1000)))
+    hours, remainder = divmod(milliseconds, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    secs, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def generate_srt(aligned_result, srt_path):
+    """Persist aligned WhisperX segments to an SRT file."""
+    segments = aligned_result.get("segments") if isinstance(aligned_result, dict) else aligned_result
+    if not segments:
+        raise ValueError("No alignment segments available to generate SRT file.")
+
+    output_folder = os.path.dirname(srt_path) or "."
+    os.makedirs(output_folder, exist_ok=True)
+
+    with open(srt_path, "w", encoding="utf-8") as srt_file:
+        line_number = 1
+        for segment in segments:
+            text = (segment.get("text") or "").strip()
+            if not text:
+                continue
+            start_timestamp = _format_timestamp(segment.get("start"))
+            end_timestamp = _format_timestamp(segment.get("end"))
+            srt_file.write(f"{line_number}\n{start_timestamp} --> {end_timestamp}\n{text}\n\n")
+            line_number += 1
 
 
 def render_karaoke_output(inst_path, srt_path, font_path, output_dir, base_name):
@@ -120,8 +171,10 @@ def main():
     parser.add_argument("font_path", type=str, help="Path to the TTF font file to use for subtitles")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory (optional)")
     args = parser.parse_args()
-    vocal_generate_srt(args.input_mp3, args.language_code, 'who-knows-DC_output/lyrics.srt')
     # create_karaoke_video(args.input_mp3, args.language_code, args.font_path)
+    # print(args.output_dir)
+    # print(type(args.output_dir))
+    transcribe_vocals_to_srt(args.input_mp3, args.language_code, args.output_dir)
 
 if __name__ == "__main__":
     main()
