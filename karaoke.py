@@ -23,6 +23,107 @@ except Exception as e:
         pass
 # -----------------------------
 
+def reconcile_lyrics(whisper_segments, official_lyrics_text):
+    """
+    Aligns official lyrics to WhisperX timestamps using sequence matching.
+    Returns a new list of segments with official text and borrowed timestamps.
+    """
+    # 1. Parse Official Text into words with line tracking
+    official_words = []
+    raw_lines = official_lyrics_text.strip().splitlines()
+    
+    for line_idx, line in enumerate(raw_lines):
+        # clean punctuation for matching, but keep original for display if needed
+        # simple whitespace split for now
+        words_in_line = line.strip().split() 
+        for w in words_in_line:
+            official_words.append({
+                "text": w,
+                "line_idx": line_idx,
+                "clean": re.sub(r'[^\w]', '', w.lower()) # normalized for comparison
+            })
+
+    # 2. Flatten Whisper segments into a single word list
+    detected_words = []
+    for seg in whisper_segments:
+        if "words" in seg:
+            for w in seg["words"]:
+                detected_words.append({
+                    "text": w["word"],
+                    "start": w.get("start"),
+                    "end": w.get("end"),
+                    "clean": re.sub(r'[^\w]', '', w["word"].lower())
+                })
+
+    # 3. Match Sequences (The Magic Step)
+    # We compare the "clean" versions of both lists
+    matcher = difflib.SequenceMatcher(
+        None, 
+        [w["clean"] for w in detected_words], 
+        [w["clean"] for w in official_words]
+    )
+
+    # 4. Transfer Timestamps
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in ('equal', 'replace'):
+            # Map detected timestamps to official words
+            # We map the range of detected words to the range of official words
+            det_slice = detected_words[i1:i2]
+            off_slice = official_words[j1:j2]
+            
+            # Simple linear mapping if counts differ, otherwise 1:1
+            for k, off_word in enumerate(off_slice):
+                # Find best corresponding detected word index
+                if not det_slice: continue
+                det_idx = int((k / len(off_slice)) * len(det_slice))
+                target_det = det_slice[det_idx]
+                
+                if off_word.get("start") is None: # Only set if not set
+                    off_word["start"] = target_det["start"]
+                    off_word["end"] = target_det["end"]
+
+    # 5. Interpolate missing timestamps (for words that didn't match)
+    # Fill gaps by looking at previous/next known times
+    last_end = 0.0
+    for w in official_words:
+        if w.get("start") is None:
+            w["start"] = last_end
+        if w.get("end") is None:
+            w["end"] = w["start"] + 0.5 # Default duration if completely missing
+        last_end = w["end"]
+
+    # 6. Re-group into Lines (Segments)
+    new_segments = []
+    current_line_idx = -1
+    current_segment = None
+
+    for w in official_words:
+        if w["line_idx"] != current_line_idx:
+            # New line detected, push previous segment
+            if current_segment:
+                new_segments.append(current_segment)
+            
+            # Start new segment
+            current_line_idx = w["line_idx"]
+            current_segment = {
+                "text": "", 
+                "start": w["start"], 
+                "end": w["end"], 
+                "words": []
+            }
+        
+        # Add word to current segment
+        # Add space if not first word
+        sep = " " if current_segment["text"] else ""
+        current_segment["text"] += sep + w["text"]
+        current_segment["end"] = w["end"] # Extend segment end
+        current_segment["words"].append(w)
+
+    if current_segment:
+        new_segments.append(current_segment)
+
+    return new_segments
+
 def _ensure_ctranslate2_rocm_stub():
     """Create the dummy ROCm DLL folder that ctranslate2 expects on Windows."""
     if os.name != "nt":
@@ -64,30 +165,50 @@ def separate_audio_sources(input_mp3):
     }
 
 
-def transcribe_vocals_to_srt(vocals_path, language_code, output_dir):
+def transcribe_vocals_to_srt(vocals_path, language_code, output_dir, official_lyrics_path=None):
     """Use WhisperX to transcribe the vocals and return the planned SRT path."""
     print(f"--- Step 2: Transcribing ({language_code}) ---")
+    
+    # ... [Keep your existing model loading code] ...
     device = "cuda" if torch.cuda.is_available() else "cpu"
     _ensure_ctranslate2_rocm_stub()
-    import whisperx  # switched to whisperx for better timestamps
+    import whisperx 
 
     compute_type = "float16" if device == "cuda" else "float32"
-    model = whisperx.load_model("large-v2", device, compute_type=compute_type)
+    model = whisperx.load_model("large-v2", device=device, compute_type=compute_type)
     audio = whisperx.load_audio(vocals_path)
 
     result = model.transcribe(audio, batch_size=16, language=language_code)
     model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
     aligned_result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
 
+    # --- NEW BLOCK: CHECK FOR OFFICIAL LYRICS ---
+    final_segments = aligned_result["segments"] # Default to AI results
+    
+    if official_lyrics_path and os.path.exists(official_lyrics_path):
+        print(f"--- Reconciling with Official Lyrics: {official_lyrics_path} ---")
+        try:
+            with open(official_lyrics_path, "r", encoding="utf-8") as f:
+                official_text = f.read()
+            
+            # Call the new function
+            final_segments = reconcile_lyrics(final_segments, official_text)
+            print("Reconciliation successful.")
+        except Exception as e:
+            print(f"Warning: Lyrics reconciliation failed ({e}). Falling back to raw transcription.")
+    # ---------------------------------------------
+
     resolved_output_dir = output_dir or os.path.dirname(os.path.abspath(vocals_path))
     os.makedirs(resolved_output_dir, exist_ok=True)
     srt_path = os.path.join(resolved_output_dir, "lyrics.srt")
-    generate_srt(aligned_result, srt_path)
+    
+    # Pass final_segments instead of aligned_result
+    generate_srt(final_segments, srt_path) 
 
     return {
-        "aligned_segments": aligned_result,
+        "aligned_segments": final_segments,
         "srt_path": srt_path,
-    }
+    },
 
 
 def _format_timestamp(seconds):
@@ -170,11 +291,13 @@ def main():
     parser.add_argument("language_code", type=str, help="Language code for transcription (e.g., 'ko' for Korean)")
     parser.add_argument("font_path", type=str, help="Path to the TTF font file to use for subtitles")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory (optional)")
+    parser.add_argument("--official_lyrics", type=str, default=None, help="Path to official lyrics text file (optional)")
+    
     args = parser.parse_args()
     # create_karaoke_video(args.input_mp3, args.language_code, args.font_path)
     # print(args.output_dir)
     # print(type(args.output_dir))
-    transcribe_vocals_to_srt(args.input_mp3, args.language_code, args.output_dir)
+    transcribe_vocals_to_srt(args.input_mp3, args.language_code, args.output_dir, args.official_lyrics)
 
 if __name__ == "__main__":
     main()
