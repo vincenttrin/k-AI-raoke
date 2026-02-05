@@ -1,0 +1,35 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Karaoke,Arial,60,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,1,0,1,3,0,5,10,10,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:12.74,Karaoke,,0,0,0,,{\k78}I'll {\k54}probably {\k3}be {\k2}a {\k58}waste {\k10}of {\k42}your {\k126}time, {\k60}but {\k38}who {\k533}knows? 
+Dialogue: 0,0:00:12.72,0:00:25.46,Karaoke,,0,0,0,,{\k1083}Chances {\k34}are {\k8}I'll {\k28}step {\k36}out {\k3}of {\k18}line, {\k6}but {\k5}who {\k12}knows? 
+Dialogue: 0,0:00:25.44,0:00:38.18,Karaoke,,0,0,0,,{\k573}Lately, {\k20}you've {\k70}set {\k4}up {\k12}in {\k3}my {\k381}mind 
+Dialogue: 0,0:00:38.16,0:00:50.90,Karaoke,,0,0,0,,{\k146}Yeah {\k40}girl {\k40}you, {\k16}and {\k16}I {\k98}like {\k535}that 
+Dialogue: 0,0:00:50.88,0:01:03.63,Karaoke,,0,0,0,,{\k459}Lately, {\k14}I've {\k30}been {\k80}thinking {\k42}that {\k70}perhaps {\k1}I {\k3}am {\k18}a {\k353}coward 
+Dialogue: 0,0:01:03.60,0:01:16.35,Karaoke,,0,0,0,,{\k154}Hiding {\k20}in {\k14}a {\k102}disguise {\k24}of {\k11}an {\k505}ever-giving {\k30}flower 
+Dialogue: 0,0:01:16.33,0:01:29.07,Karaoke,,0,0,0,,{\k1033}Incompetent {\k44}steward {\k10}of {\k11}all {\k4}of {\k14}that {\k58}sweet, {\k22}sweet {\k10}power 
+Dialogue: 0,0:01:29.05,0:01:41.79,Karaoke,,0,0,0,,{\k166}Yesterday {\k6}was {\k50}feeling {\k24}so {\k50}good, {\k6}now {\k10}it's {\k335}gone 
+Dialogue: 0,0:01:41.77,0:01:54.51,Karaoke,,0,0,0,,{\k54}I'd {\k64}feel {\k8}like {\k30}that {\k21}always {\k4}if {\k42}I {\k58}could, {\k12}is {\k8}that {\k12}wrong? 
+Dialogue: 0,0:01:54.49,0:02:07.23,Karaoke,,0,0,0,,{\k411}Tell {\k112}me {\k88}'bout {\k16}the {\k226}city {\k80}you're {\k7}from 
+Dialogue: 0,0:02:07.21,0:02:12.31,Karaoke,,0,0,0,,{\k30}Is {\k25}it {\k76}hot? 
+Dialogue: 0,0:02:12.35,0:02:19.95,Karaoke,,0,0,0,,{\k266}Does {\k20}it {\k22}snow {\k309}there? 
+Dialogue: 0,0:02:19.93,0:02:32.67,Karaoke,,0,0,0,,{\k88}Lately, {\k8}I've {\k8}been {\k16}thinking {\k9}'bout {\k3}my {\k20}precarious {\k12}future 
+Dialogue: 0,0:02:32.65,0:02:45.39,Karaoke,,0,0,0,,{\k140}Will {\k116}you {\k22}be {\k102}there {\k8}with {\k4}me {\k4}by {\k3}my {\k24}side, {\k64}my {\k282}girl, {\k16}my {\k76}shooter? 
+Dialogue: 0,0:02:45.37,0:02:53.76,Karaoke,,0,0,0,,{\k132}Who's {\k18}to {\k98}say {\k82}who {\k252}calculates? 
+Dialogue: 0,0:02:53.84,0:02:58.12,Karaoke,,0,0,0,,{\k15}Not {\k120}me, {\k20}I'm {\k10}no {\k15}computer 
+Dialogue: 0,0:02:58.10,0:03:10.84,Karaoke,,0,0,0,,{\k42}Is {\k20}it {\k20}a {\k44}crime {\k4}to {\k108}be {\k14}unsure? 
+Dialogue: 0,0:03:10.82,0:03:23.56,Karaoke,,0,0,0,,{\k64}In {\k66}time, {\k9}we'll {\k72}find {\k4}if {\k8}it's {\k22}sustainable 
+Dialogue: 0,0:03:23.54,0:03:36.28,Karaoke,,0,0,0,,{\k730}You're {\k10}pure, {\k12}you're {\k467}kind, {\k14}mature, {\k12}divine 
+Dialogue: 0,0:03:36.26,0:03:49.00,Karaoke,,0,0,0,,{\k110}You {\k66}might {\k20}be {\k6}too {\k7}good {\k9}for {\k50}me, {\k814}unattainable 
+Dialogue: 0,0:03:48.98,0:04:01.72,Karaoke,,0,0,0,,{\k481}Maybe {\k26}we {\k6}get {\k116}married {\k100}one {\k68}day, {\k72}but {\k6}who {\k12}knows? 
+Dialogue: 0,0:04:01.70,0:04:14.44,Karaoke,,0,0,0,,{\k1023}Think {\k7}I'll {\k7}take {\k8}that {\k14}thought {\k4}to {\k6}the {\k158}grave, {\k6}but {\k5}who {\k12}knows? 
+Dialogue: 0,0:04:14.42,0:04:27.16,Karaoke,,0,0,0,,{\k216}I {\k38}know {\k90}that {\k62}I'll {\k246}love {\k40}you {\k315}always 
+Dialogue: 0,0:04:27.14,0:04:39.88,Karaoke,,0,0,0,,{\k1221}Yeah {\k8}girl {\k7}you, {\k5}and {\k1}I {\k8}like {\k8}that 

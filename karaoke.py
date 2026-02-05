@@ -25,7 +25,10 @@ except Exception as e:
 
 def reconcile_lyrics(whisper_segments, official_lyrics_text):
     """
-    Aligns official lyrics to WhisperX timestamps using sequence matching.
+    [DEPRECATED] Aligns official lyrics to WhisperX timestamps using sequence matching.
+    This function is kept for backward compatibility but is no longer used.
+    The script now uses forced alignment directly (see transcribe_vocals_to_ass).
+    
     Returns a new list of segments with official text and borrowed timestamps.
     """
     # 1. Parse Official Text into words with line tracking
@@ -165,97 +168,164 @@ def separate_audio_sources(input_mp3):
     }
 
 
-def transcribe_vocals_to_srt(vocals_path, language_code, output_dir, official_lyrics_path=None):
-    """Use WhisperX to transcribe the vocals and return the planned SRT path."""
-    print(f"--- Step 2: Transcribing ({language_code}) ---")
+def transcribe_vocals_to_ass(vocals_path, language_code, output_dir, official_lyrics_path=None):
+    """Use WhisperX to align or transcribe the vocals and return the planned ASS path."""
     
-    # ... [Keep your existing model loading code] ...
     device = "cuda" if torch.cuda.is_available() else "cpu"
     _ensure_ctranslate2_rocm_stub()
     import whisperx 
-
-    compute_type = "float16" if device == "cuda" else "float32"
-    model = whisperx.load_model("large-v2", device=device, compute_type=compute_type)
-    audio = whisperx.load_audio(vocals_path)
-
-    result = model.transcribe(audio, batch_size=16, language=language_code)
-    model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
-    aligned_result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-
-    # --- NEW BLOCK: CHECK FOR OFFICIAL LYRICS ---
-    final_segments = aligned_result["segments"] # Default to AI results
     
+    audio = whisperx.load_audio(vocals_path)
+    
+    # Load alignment model (needed for both paths)
+    model_a, metadata = whisperx.load_align_model(language_code=language_code, device=device)
+    
+    # --- FORCED ALIGNMENT PATH (if official lyrics provided) ---
     if official_lyrics_path and os.path.exists(official_lyrics_path):
-        print(f"--- Reconciling with Official Lyrics: {official_lyrics_path} ---")
+        print(f"--- Step 2: Forced Alignment with Official Lyrics ({language_code}) ---")
         try:
             with open(official_lyrics_path, "r", encoding="utf-8") as f:
                 official_text = f.read()
             
-            # Call the new function
-            final_segments = reconcile_lyrics(final_segments, official_text)
-            print("Reconciliation successful.")
+            # Convert lyrics to segments format expected by WhisperX align
+            # Split into lines, treating each line as a segment
+            lines = [line.strip() for line in official_text.strip().splitlines() if line.strip()]
+            
+            # Create pseudo-segments (WhisperX align expects this format)
+            # We'll estimate timing based on audio length divided by number of lines
+            audio_duration = len(audio) / 16000.0  # WhisperX loads at 16kHz
+            estimated_duration_per_line = audio_duration / len(lines) if lines else 1.0
+            
+            pseudo_segments = []
+            for i, line in enumerate(lines):
+                pseudo_segments.append({
+                    "start": i * estimated_duration_per_line,
+                    "end": (i + 1) * estimated_duration_per_line,
+                    "text": line
+                })
+            
+            # Use WhisperX align to force-align the official lyrics
+            print("Running forced alignment...")
+            aligned_result = whisperx.align(
+                pseudo_segments, 
+                model_a, 
+                metadata, 
+                audio, 
+                device, 
+                return_char_alignments=False
+            )
+            
+            final_segments = aligned_result["segments"]
+            print("Forced alignment successful.")
+            
         except Exception as e:
-            print(f"Warning: Lyrics reconciliation failed ({e}). Falling back to raw transcription.")
-    # ---------------------------------------------
-
+            print(f"Warning: Forced alignment failed ({e}). Falling back to transcription.")
+            official_lyrics_path = None  # Force fallback
+    
+    # --- TRANSCRIPTION PATH (fallback or default) ---
+    if not official_lyrics_path or not os.path.exists(official_lyrics_path):
+        print(f"--- Step 2: Transcribing ({language_code}) ---")
+        compute_type = "float16" if device == "cuda" else "float32"
+        model = whisperx.load_model("large-v2", device=device, compute_type=compute_type)
+        
+        result = model.transcribe(audio, batch_size=16, language=language_code)
+        aligned_result = whisperx.align(
+            result["segments"], 
+            model_a, 
+            metadata, 
+            audio, 
+            device, 
+            return_char_alignments=False
+        )
+        
+        final_segments = aligned_result["segments"]
+        print("Transcription complete.")
+    
+    # --- GENERATE ASS FILE ---
     resolved_output_dir = output_dir or os.path.dirname(os.path.abspath(vocals_path))
     os.makedirs(resolved_output_dir, exist_ok=True)
-    srt_path = os.path.join(resolved_output_dir, "lyrics.srt")
     
-    # Pass final_segments instead of aligned_result
-    generate_srt(final_segments, srt_path) 
-
+    ass_path = os.path.join(resolved_output_dir, "lyrics.ass")
+    generate_karaoke_ass(final_segments, ass_path, font_name="Arial") 
+    
     return {
         "aligned_segments": final_segments,
-        "srt_path": srt_path,
-    },
+        "srt_path": ass_path,  # Return the ASS path here
+    }
 
 
-def _format_timestamp(seconds):
-    """Convert float seconds to the SRT timestamp format."""
-    if seconds is None:
-        seconds = 0.0
-    milliseconds = max(0, int(round(seconds * 1000)))
-    hours, remainder = divmod(milliseconds, 3600000)
-    minutes, remainder = divmod(remainder, 60000)
-    secs, millis = divmod(remainder, 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+def format_ass_time(seconds):
+    """Convert seconds to ASS format h:mm:ss.cc"""
+    if seconds is None: seconds = 0.0
+    cs = int(round(seconds * 100)) # centiseconds
+    h, r = divmod(cs, 360000)
+    m, r = divmod(r, 6000)
+    s, cs = divmod(r, 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-
-def generate_srt(aligned_result, srt_path):
-    """Persist aligned WhisperX segments to an SRT file."""
+def generate_karaoke_ass(aligned_result, ass_path, font_name="Arial"):
+    """
+    Generate an .ass file with karaoke tags based on word-level timestamps.
+    """
     segments = aligned_result.get("segments") if isinstance(aligned_result, dict) else aligned_result
-    if not segments:
-        raise ValueError("No alignment segments available to generate SRT file.")
+    
+    # ASS Header
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
 
-    output_folder = os.path.dirname(srt_path) or "."
-    os.makedirs(output_folder, exist_ok=True)
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Karaoke,{font_name},60,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,1,0,1,3,0,5,10,10,50,1
 
-    with open(srt_path, "w", encoding="utf-8") as srt_file:
-        line_number = 1
-        for segment in segments:
-            text = (segment.get("text") or "").strip()
-            if not text:
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(header)
+        
+        for seg in segments:
+            if "words" not in seg:
                 continue
-            start_timestamp = _format_timestamp(segment.get("start"))
-            end_timestamp = _format_timestamp(segment.get("end"))
-            srt_file.write(f"{line_number}\n{start_timestamp} --> {end_timestamp}\n{text}\n\n")
-            line_number += 1
 
+            start_time = seg["start"]
+            end_time = seg["end"]
+            
+            # Build the karaoke line: {\k20}Word {\k30}Word
+            karaoke_line = ""
+            current_time = start_time
+            
+            for idx, word in enumerate(seg["words"]):
+                w_start = word.get("start", current_time)
+                w_end = word.get("end", w_start + 0.1)
+                text = word["word"]
+                
+                # Use the actual word duration for accurate highlighting
+                duration = w_end - w_start
+                k_duration = int(duration * 100)  # Convert to centiseconds
+                
+                # Add space to text if strictly needed, though usually handled by renderer
+                karaoke_line += f"{{\\k{k_duration}}}{text} "
+                current_time = w_end
 
-def render_karaoke_output(inst_path, srt_path, font_path, output_dir, base_name):
+            # Write the dialogue line
+            f.write(f"Dialogue: 0,{format_ass_time(start_time)},{format_ass_time(end_time)},Karaoke,,0,0,0,,{karaoke_line}\n")
+
+def render_karaoke_output(inst_path, subtitle_path, font_path, output_dir, base_name):
     """Render the final karaoke video with FFmpeg."""
     print("--- Step 3: Rendering Video ---")
     output_video = os.path.join(output_dir, f"{base_name}_karaoke.mp4")
 
     font_path_arg = font_path.replace("\\", "/").replace(":", "\\:")
-    srt_path_arg = srt_path.replace("\\", "/").replace(":", "\\:")
+    subtitle_path_arg = subtitle_path.replace("\\", "/").replace(":", "\\:")
 
     cmd = [
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", "color=c=black:s=1920x1080:r=30",
         "-i", inst_path,
-        "-vf", f"subtitles='{srt_path_arg}':fontsdir='{os.path.dirname(font_path_arg)}':force_style='Fontname={os.path.splitext(os.path.basename(font_path))[0]},FontSize=24,PrimaryColour=&H00FFFF'",
+        "-vf", f"ass='{subtitle_path_arg}':fontsdir='{os.path.dirname(font_path_arg)}'",
         "-shortest",
         output_video
     ]
@@ -269,7 +339,7 @@ def render_karaoke_output(inst_path, srt_path, font_path, output_dir, base_name)
 def create_karaoke_video(input_mp3, language_code, font_path):
     """High-level convenience wrapper that runs all three stages."""
     separation_artifacts = separate_audio_sources(input_mp3)
-    transcription_artifacts = transcribe_vocals_to_srt(
+    transcription_artifacts = transcribe_vocals_to_ass(
         separation_artifacts["vocals_path"], language_code, separation_artifacts["output_dir"]
     )
     return render_karaoke_output(
@@ -297,7 +367,8 @@ def main():
     # create_karaoke_video(args.input_mp3, args.language_code, args.font_path)
     # print(args.output_dir)
     # print(type(args.output_dir))
-    transcribe_vocals_to_srt(args.input_mp3, args.language_code, args.output_dir, args.official_lyrics)
+    # transcribe_vocals_to_ass(args.input_mp3, args.language_code, args.output_dir, args.official_lyrics)\
+    render_karaoke_output(r"who-knows-DC_output\htdemucs\who-knows-DC\no_vocals.wav", r"who-knows-DC_output\lyrics.ass", args.font_path, "who-knows-DC_output", "who_knows")
 
 if __name__ == "__main__":
     main()
