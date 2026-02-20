@@ -1,0 +1,5 @@
+# k-AI-raoke: Vietnamese Song Lyrics Translator
+# Core dependencies
+tinytag>=2.0.0
+requests>=2.28.0
+deep-translator>=1.11.0
