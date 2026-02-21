@@ -144,8 +144,14 @@ def _ensure_ctranslate2_rocm_stub():
     except Exception as exc:
         print(f"Warning: unable to prepare ctranslate2 DLL directory: {exc}")
 
-def separate_audio_sources(input_mp3):
-    """Run Demucs separation and return relevant file paths."""
+def separate_audio_sources(input_mp3, vocal_volume=0.20):
+    """Run Demucs separation, mix reduced vocals into the instrumental, and return relevant file paths.
+    
+    Args:
+        input_mp3: Path to the input audio file.
+        vocal_volume: Volume level for vocals in the final mix (0.0–1.0).
+                      Default 0.20 = 20% of original vocal volume.
+    """
     base_name = os.path.splitext(os.path.basename(input_mp3))[0]
     output_dir = os.path.join(os.getcwd(), f"{base_name}_output")
     os.makedirs(output_dir, exist_ok=True)
@@ -159,13 +165,53 @@ def separate_audio_sources(input_mp3):
     vocals_path = os.path.join(demucs_song_dir, "vocals.wav")
     inst_path = os.path.join(demucs_song_dir, "no_vocals.wav")
 
+    # Mix reduced vocals back into the instrumental
+    mixed_path = mix_vocals_with_instrumental(
+        inst_path, vocals_path, output_dir, base_name, vocal_volume=vocal_volume
+    )
+
     return {
         "base_name": base_name,
         "output_dir": output_dir,
         "demucs_song_dir": demucs_song_dir,
         "vocals_path": vocals_path,
         "instrumental_path": inst_path,
+        "mixed_path": mixed_path,
     }
+
+
+def mix_vocals_with_instrumental(
+    instrumental_path, vocals_path, output_dir, base_name, vocal_volume=0.20
+):
+    """Mix vocals at reduced volume back into the instrumental using ffmpeg.
+
+    Args:
+        instrumental_path: Path to the Demucs no_vocals.wav.
+        vocals_path: Path to the Demucs vocals.wav.
+        output_dir: Directory to write the mixed file into.
+        base_name: Song base name (used for the output filename).
+        vocal_volume: Volume multiplier for the vocal track (0.0–1.0).
+
+    Returns:
+        Path to the mixed WAV file.
+    """
+    mixed_path = os.path.join(output_dir, f"{base_name}_karaoke_mix.wav")
+
+    print(f"--- Mixing vocals at {int(vocal_volume * 100)}% into instrumental ---")
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", instrumental_path,
+            "-i", vocals_path,
+            "-filter_complex",
+            f"[1:a]volume={vocal_volume}[quiet_vocals];"
+            f"[0:a][quiet_vocals]amix=inputs=2:duration=longest:dropout_transition=0",
+            mixed_path,
+        ],
+        check=True,
+    )
+    print(f"    ✅  Mixed audio saved to: {mixed_path}")
+    return mixed_path
 
 
 def transcribe_vocals_to_ass(vocals_path, language_code, output_dir, official_lyrics_path=None):
@@ -336,14 +382,20 @@ def render_karaoke_output(inst_path, subtitle_path, font_path, output_dir, base_
     return output_video
 
 
-def create_karaoke_video(input_mp3, language_code, font_path):
-    """High-level convenience wrapper that runs all three stages."""
-    separation_artifacts = separate_audio_sources(input_mp3)
+def create_karaoke_video(input_mp3, language_code, font_path, vocal_volume=0.20):
+    """High-level convenience wrapper that runs all three stages.
+    
+    Args:
+        vocal_volume: Volume level for vocals in the final mix (0.0–1.0).
+                      Default 0.20 = 20% of original vocal volume.
+    """
+    separation_artifacts = separate_audio_sources(input_mp3, vocal_volume=vocal_volume)
     transcription_artifacts = transcribe_vocals_to_ass(
         separation_artifacts["vocals_path"], language_code, separation_artifacts["output_dir"]
     )
+    # Use the mixed audio (instrumental + reduced vocals) for the final video
     return render_karaoke_output(
-        separation_artifacts["instrumental_path"],
+        separation_artifacts["mixed_path"],
         transcription_artifacts["srt_path"],
         font_path,
         separation_artifacts["output_dir"],
@@ -362,6 +414,8 @@ def main():
     parser.add_argument("font_path", type=str, help="Path to the TTF font file to use for subtitles")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory (optional)")
     parser.add_argument("--official_lyrics", type=str, default=None, help="Path to official lyrics text file (optional)")
+    parser.add_argument("--vocal_volume", type=float, default=0.20,
+                        help="Vocal volume in final mix 0.0–1.0 (default: 0.20 = 20%%)")
     
     args = parser.parse_args()
     # create_karaoke_video(args.input_mp3, args.language_code, args.font_path)

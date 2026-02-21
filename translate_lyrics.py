@@ -9,10 +9,11 @@ Dependencies: tinytag, requests, deep-translator
 
 import json
 import re
+import subprocess
 import textwrap
 from pathlib import Path
+from urllib.parse import urlencode
 
-import requests
 from deep_translator import GoogleTranslator
 from tinytag import TinyTag
 
@@ -97,29 +98,47 @@ def identify_song(
 # ---------------------------------------------------------------------------
 # 2.  Lyrics retrieval via LRCLib
 # ---------------------------------------------------------------------------
+def _lrclib_get(endpoint: str, params: dict) -> list | dict:
+    """
+    Call LRCLib API using curl to avoid Python 3.14 SSL handshake issues.
+    Retries up to 3 times on transient failures.
+    Returns parsed JSON (list or dict).
+    """
+    url = f"{LRCLIB_BASE}/{endpoint}?{urlencode(params)}"
+    user_agent = LRCLIB_HEADERS["User-Agent"]
+    cmd = [
+        "curl", "-sS",
+        "--tlsv1.2",           # force TLS 1.2 for compatibility
+        "--retry", "3",        # curl-level retries on transient errors
+        "--retry-delay", "2",
+        "--max-time", "20",
+        "-H", f"User-Agent: {user_agent}",
+        url,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"curl failed (exit {result.returncode}): {result.stderr.strip()}")
+    body = result.stdout.strip()
+    if not body:
+        return []
+    return json.loads(body)
+
+
 def search_lyrics(track_name: str, artist_name: str) -> list[dict]:
     """
     Search LRCLib for lyrics matching the given track and artist.
     Returns a list of result dicts (may be empty).
     """
-    params = {"track_name": track_name, "artist_name": artist_name}
-    resp = requests.get(
-        f"{LRCLIB_BASE}/search", params=params, headers=LRCLIB_HEADERS, timeout=15
-    )
-    resp.raise_for_status()
-    return resp.json()
+    data = _lrclib_get("search", {"track_name": track_name, "artist_name": artist_name})
+    return data if isinstance(data, list) else []
 
 
 def search_lyrics_query(query: str) -> list[dict]:
     """
     Fallback: search LRCLib with a free-text query.
     """
-    params = {"q": query}
-    resp = requests.get(
-        f"{LRCLIB_BASE}/search", params=params, headers=LRCLIB_HEADERS, timeout=15
-    )
-    resp.raise_for_status()
-    return resp.json()
+    data = _lrclib_get("search", {"q": query})
+    return data if isinstance(data, list) else []
 
 
 def fetch_lyrics(track_name: str, artist_name: str) -> dict | None:
@@ -394,6 +413,14 @@ def main():
     parser.add_argument(
         "--target-lang", default="en", help="Target language code (default: en)"
     )
+    parser.add_argument(
+        "--video", action="store_true",
+        help="Also generate a lyrics video (Vietnamese + English subtitles)",
+    )
+    parser.add_argument(
+        "--fps", type=int, default=2,
+        help="Video frames per second (default: 2, only used with --video)",
+    )
     args = parser.parse_args()
 
     result = process_audio(
@@ -416,6 +443,29 @@ def main():
     print("=" * 60)
     print(result["translated_lyrics"])
     print("=" * 60)
+
+    # Optionally generate video
+    if args.video:
+        from generate_video import create_lyrics_video
+
+        out_dir = Path(result["output_dir"])
+        orig_lrc = out_dir / "lyrics_original_synced.lrc"
+        trans_lrc = out_dir / "lyrics_translated_synced.lrc"
+
+        if not orig_lrc.exists() or not trans_lrc.exists():
+            print("\n⚠️  Cannot generate video — synced lyrics files are missing.")
+            return
+
+        video_path = str(out_dir / "lyrics_video.mp4")
+        create_lyrics_video(
+            audio_path=args.audio,
+            original_lrc_path=str(orig_lrc),
+            translated_lrc_path=str(trans_lrc),
+            output_video_path=video_path,
+            title=result["song"]["title"],
+            artist=result["song"]["artist"],
+            fps=args.fps,
+        )
 
 
 if __name__ == "__main__":
